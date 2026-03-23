@@ -4,6 +4,9 @@ build/
 .env
 .env.local
 .vscode/
+data/*.pdf
+data/*.txt
+data/*.html
 
 .DS_Store
 .DS_Store
