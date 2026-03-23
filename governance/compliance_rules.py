@@ -108,6 +108,9 @@ class RuleResult:
     severity: str           # "BLOCK" | "WARN"
     passed: bool
     message: str            # Explanation for audit log / UI
+    # Business function category — used by Nadia's Power BI Page 3
+    # Compliance framework §9: policy violation rate by category
+    business_function: str = "general"  # "grounding" | "access" | "risk" | "freshness" | "general"
 
 
 @dataclass
@@ -269,10 +272,8 @@ class ComplianceEngine:
     def _check_cr001(self, citation_count: int) -> RuleResult:
         passed = citation_count >= 1
         return RuleResult(
-            rule_id="CR-001",
-            rule_name="Citation Required",
-            severity="BLOCK",
-            passed=passed,
+            rule_id="CR-001", rule_name="Citation Required",
+            severity="BLOCK", passed=passed, business_function="grounding",
             message=(
                 "PASS: Response includes citations."
                 if passed
@@ -283,10 +284,8 @@ class ComplianceEngine:
     def _check_cr002(self, trust_score: int) -> RuleResult:
         passed = trust_score >= MINIMUM_TRUST_SCORE
         return RuleResult(
-            rule_id="CR-002",
-            rule_name="Minimum Trust Score",
-            severity="BLOCK",
-            passed=passed,
+            rule_id="CR-002", rule_name="Minimum Trust Score",
+            severity="BLOCK", passed=passed, business_function="grounding",
             message=(
                 f"PASS: Trust score {trust_score} meets minimum ({MINIMUM_TRUST_SCORE})."
                 if passed
@@ -297,10 +296,8 @@ class ComplianceEngine:
     def _check_cr003(self, risk_flag: str) -> RuleResult:
         passed = risk_flag != "HIGH"
         return RuleResult(
-            rule_id="CR-003",
-            rule_name="High-Risk Response Review",
-            severity="WARN",
-            passed=passed,
+            rule_id="CR-003", rule_name="High-Risk Response Review",
+            severity="WARN", passed=passed, business_function="risk",
             message=(
                 "PASS: No high-risk language detected."
                 if passed
@@ -311,10 +308,8 @@ class ComplianceEngine:
     def _check_cr004(self, citation_strength: str, response_text: str) -> RuleResult:
         passed = citation_strength != "NONE"
         return RuleResult(
-            rule_id="CR-004",
-            rule_name="Ungrounded Response Block",
-            severity="BLOCK",
-            passed=passed,
+            rule_id="CR-004", rule_name="Ungrounded Response Block",
+            severity="BLOCK", passed=passed, business_function="grounding",
             message=(
                 "PASS: Response is grounded in retrieved document chunks."
                 if passed
@@ -325,10 +320,8 @@ class ComplianceEngine:
     def _check_cr005(self, confidence_level: str) -> RuleResult:
         passed = confidence_level != "LOW"
         return RuleResult(
-            rule_id="CR-005",
-            rule_name="Low Confidence Advisory",
-            severity="WARN",
-            passed=passed,
+            rule_id="CR-005", rule_name="Low Confidence Advisory",
+            severity="WARN", passed=passed, business_function="grounding",
             message=(
                 "PASS: Confidence level is acceptable."
                 if passed
@@ -339,10 +332,8 @@ class ComplianceEngine:
     def _check_cr006(self, citation_count: int) -> RuleResult:
         passed = citation_count > 1
         return RuleResult(
-            rule_id="CR-006",
-            rule_name="Source Diversity",
-            severity="WARN",
-            passed=passed,
+            rule_id="CR-006", rule_name="Source Diversity",
+            severity="WARN", passed=passed, business_function="grounding",
             message=(
                 f"PASS: {citation_count} sources referenced — good diversity."
                 if passed
@@ -353,10 +344,8 @@ class ComplianceEngine:
     def _check_cr007(self, response_text: str) -> RuleResult:
         passed = len(response_text.strip()) >= MINIMUM_RESPONSE_LENGTH
         return RuleResult(
-            rule_id="CR-007",
-            rule_name="Response Length Sanity Check",
-            severity="WARN",
-            passed=passed,
+            rule_id="CR-007", rule_name="Response Length Sanity Check",
+            severity="WARN", passed=passed, business_function="general",
             message=(
                 "PASS: Response length is within expected range."
                 if passed
@@ -367,19 +356,12 @@ class ComplianceEngine:
     # ── Helpers ───────────────────────────────
 
     def _check_cr008(self, risk_score_result: dict) -> RuleResult:
-        """
-        CR-008: Document Freshness Check.
-        Compliance doc §3.2: freshness checks against document effective/expiry dates.
-        Uses freshness_flag from risk_scorer output.
-        """
         freshness_flag = risk_score_result.get("freshness_flag", "UNKNOWN")
         stale_count = risk_score_result.get("stale_citation_count", 0)
         passed = freshness_flag in ("CURRENT", "UNKNOWN")
         return RuleResult(
-            rule_id="CR-008",
-            rule_name="Document Freshness Check",
-            severity="WARN",
-            passed=passed,
+            rule_id="CR-008", rule_name="Document Freshness Check",
+            severity="WARN", passed=passed, business_function="freshness",
             message=(
                 f"PASS: Citations are from current document versions (freshness={freshness_flag})."
                 if passed
@@ -389,16 +371,10 @@ class ComplianceEngine:
         )
 
     def _check_cr009(self, confidence_level: str, risk_flag: str) -> RuleResult:
-        """
-        CR-009: Human Escalation Required.
-        Compliance doc §7: low-trust + high-risk = mandatory human-in-the-loop.
-        """
         needs_escalation = (confidence_level == "LOW" and risk_flag == "HIGH")
         return RuleResult(
-            rule_id="CR-009",
-            rule_name="Human Escalation Required",
-            severity="BLOCK",
-            passed=not needs_escalation,
+            rule_id="CR-009", rule_name="Human Escalation Required",
+            severity="BLOCK", passed=not needs_escalation, business_function="risk",
             message=(
                 "PASS: Confidence/risk combination does not require escalation."
                 if not needs_escalation
@@ -501,12 +477,21 @@ class ComplianceEngine:
             "compliant": compliant,
             "blocked_rule_ids": [r.rule_id for r in blocked],
             "warned_rule_ids": [r.rule_id for r in warned],
-            # Architecture §9: version tracking for reproducibility + regulator traceability
+            # Architecture §9: all 5 version fields required for Power BI dashboard (Nadia)
+            # and regulator-facing traceability
             "version_snapshot": {
-                "governance_module": "1.0.0",
+                "model_version": "azure-openai-gpt4-1.0",
+                "prompt_template_version": "1.0.0",
+                "retrieval_index_version": "1.0.0",
+                "policy_bundle_version": "1.0.0",
+                "evaluation_config_version": "1.0.0",
+                "governance_module_version": "1.0.0",
                 "rule_count": len(COMPLIANCE_RULES),
                 "schema": "citeguard-audit-v1",
             },
+            # Policy violation categories for Nadia's Power BI Page 3
+            # Compliance framework §9: policy violation rate by category
+            "policy_violation_categories": [r.rule_id for r in blocked],
         }
 
 
