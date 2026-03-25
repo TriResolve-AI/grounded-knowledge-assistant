@@ -107,12 +107,22 @@ function App() {
         {results.length > 0 && (
           <div className="results">
             <h3>Search Results</h3>
+            <button onClick={handleSearch} disabled={loading} className="refresh-button">
+              Refresh Results
+            </button>
             <ul>
-              {results.map((tool, index) => (
-                <li key={index}>
-                  <strong>{tool.name}</strong>: {tool.description}
-                </li>
-              ))}
+              {results.map((tool, index) => {
+                const toolSlug = tool.name.toLowerCase().replace(/\s+/g, '-');
+                const toolUrl = tool.url || `https://example.com/tools/${toolSlug}`;
+                return (
+                  <li key={index}>
+                    <a href={toolUrl} target="_blank" rel="noopener noreferrer">
+                      <strong>{tool.name}</strong>
+                    </a>
+                    : {tool.description}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
