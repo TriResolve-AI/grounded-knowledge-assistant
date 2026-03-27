@@ -9,6 +9,7 @@ app.use(express.json());
 // Import services
 const searchService = require('./services/searchService');
 const governance = require('./services/governance');
+const auditService = require('./services/auditService');
 
 // Debug log to confirm execution
 console.log("Starting server...");
@@ -70,7 +71,21 @@ app.post('/rag', async (req, res) => {
       return res.status(400).json({ error: 'query and user_role are required' });
     }
 
+    // One audit record per RAG request, aligned to locked schema field names.
+    const auditRecord = {
+      action: 'rag_query',
+      query,
+      user_role,
+      method: req.method,
+      path: req.path,
+      userAgent: req.get('user-agent') || null,
+      status: 'initiated'
+    };
+
+    await auditService.writeAuditRecord(auditRecord);
+
     const result = await searchService.processUserQuery(query, user_role);
+
     if (result.status === 'error') {
       return res.status(500).json(result);
     }
@@ -78,6 +93,18 @@ app.post('/rag', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('RAG error:', error.message);
+    
+    // Write error audit record
+    try {
+      await auditService.writeAuditRecord({
+        action: 'rag_query',
+        status: 'error',
+        errorMessage: error.message
+      });
+    } catch (auditError) {
+      console.error('Error writing error audit record:', auditError);
+    }
+
     res.status(500).json({ error: error.message });
   }
 });
@@ -94,7 +121,39 @@ app.get('/rag', async (req, res) => {
       });
     }
 
+    // Write incoming request audit record
+    const auditRecord = {
+      action: 'rag_query',
+      query,
+      user_role,
+      method: req.method,
+      path: req.path,
+      userAgent: req.get('user-agent') || null,
+      status: 'initiated'
+    };
+
+    try {
+      await auditService.writeAuditRecord(auditRecord);
+    } catch (auditError) {
+      console.error('Error writing initial audit record:', auditError);
+    }
+
     const result = await searchService.processUserQuery(query, user_role);
+    
+    // Write completion audit record
+    try {
+      await auditService.writeAuditRecord({
+        action: 'rag_query',
+        query,
+        user_role,
+        status: result.status === 'error' ? 'error' : 'success',
+        resultStatus: result.status,
+        hasResults: result.results ? result.results.length > 0 : false
+      });
+    } catch (auditError) {
+      console.error('Error writing completion audit record:', auditError);
+    }
+
     if (result.status === 'error') {
       return res.status(500).json(result);
     }
@@ -102,8 +161,50 @@ app.get('/rag', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('RAG GET error:', error.message);
+    
+    // Write error audit record
+    try {
+      await auditService.writeAuditRecord({
+        action: 'rag_query',
+        status: 'error',
+        errorMessage: error.message
+      });
+    } catch (auditError) {
+      console.error('Error writing error audit record:', auditError);
+    }
+
     res.status(500).json({ error: error.message });
   }
+});
+
+// Audit log routes
+app.get('/audit-log', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+    const auditData = await auditService.getAuditRecords(limit, offset);
+
+    res.json({
+      success: true,
+      data: auditData
+    });
+  } catch (error) {
+    console.error('Error retrieving audit logs:', error);
+    res.status(500).json({ error: 'Failed to retrieve audit logs' });
+  }
+});
+
+app.get('/audit-log/schema', (req, res) => {
+  auditService
+    .getLockedAuditSchema()
+    .then((schema) => {
+      res.json({ success: true, schema });
+    })
+    .catch((error) => {
+      console.error('Error retrieving audit schema:', error.message);
+      res.status(500).json({ error: 'Failed to retrieve locked audit schema' });
+    });
 });
 
 // IMPORTANT: This keeps the server alive

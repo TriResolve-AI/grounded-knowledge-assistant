@@ -3,24 +3,22 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-      "start": "node server.js",
-      "dev": "nodemon server.js",
-      "ingest": "node scripts/ingestDocuments.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "ingest": "node scripts/ingestDocuments.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@azure/storage-blob": "^12.31.0",
     "axios": "^1.13.6",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
   }
-
-  
 }
-
-
