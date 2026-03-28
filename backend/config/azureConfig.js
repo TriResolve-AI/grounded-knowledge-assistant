@@ -6,6 +6,13 @@ const { SearchIndexClient, SearchClient, AzureKeyCredential } = require("@azure/
 const { OpenAIClient, AzureKeyCredential: OAICredential } = require("@azure/openai");
 const { DocumentAnalysisClient } = require("@azure/ai-form-recognizer");
 
+function warnMissing(service, vars) {
+  console.warn(
+    `[azureConfig] ${service} client not configured — missing env var(s): ${vars.join(", ")}. ` +
+    `Routes that depend on this service will return 503 until the vars are set.`
+  );
+}
+
 // ─── Blob ─────────────────────────────────────────────────────────────────────
 const blobServiceClient = BlobServiceClient.fromConnectionString(
   process.env.AZURE_BLOB_CONNECTION_STRING
@@ -32,12 +39,18 @@ const openaiClient = new OpenAIClient(
 );
 
 // ─── Document Intelligence ────────────────────────────────────────────────────
-const docIntelligenceClient = new DocumentAnalysisClient(
-  process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
-  new AzureKeyCredential(process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY)
-);
+let docIntelligenceClient = null;
+if (process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT && process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY) {
+  docIntelligenceClient = new DocumentAnalysisClient(
+    process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+    new AzureKeyCredential(process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY)
+  );
+} else {
+  warnMissing("Document Intelligence", ["AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "AZURE_DOCUMENT_INTELLIGENCE_API_KEY"]);
+}
 
 module.exports = {
+  blobServiceClient,
   containerClient,
   searchIndexClient,
   searchClient,

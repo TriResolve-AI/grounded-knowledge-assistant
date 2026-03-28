@@ -12,6 +12,9 @@ class OpenAIService {
    * Generate embeddings for text
    */
   async generateEmbedding(text) {
+    if (!this.client) {
+      throw new Error("Azure OpenAI service is not configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY (or AZURE_OPENAI_KEY).");
+    }
     try {
       const response = await this.client.getEmbeddings(
         this.embeddingDeployment,
@@ -28,6 +31,9 @@ class OpenAIService {
    * Generate a grounded answer using citations
    */
   async generateGroundedAnswer(query, citations) {
+    if (!this.client) {
+      throw new Error("Azure OpenAI service is not configured. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY (or AZURE_OPENAI_KEY).");
+    }
     try {
       // Build context from citations
       const context = citations.map((citation, idx) => {
