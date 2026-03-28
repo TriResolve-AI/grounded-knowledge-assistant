@@ -10,16 +10,44 @@ const app = express();
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Debug log to confirm execution
-console.log("Starting server...");
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
 
-// Health route
-app.get("/health", (req, res) => {
+// Routes
+app.use('/query', queryRoutes);        // Main query endpoint
+app.use('/audit', auditRoutes);        // Audit log endpoints
+app.use('/documents', documentRoutes); // Document management
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    services: {
+      query: '/query',
+      audit: '/audit',
+      documents: '/documents'
+    }
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
   res.json({
-    status: "OK",
-    message: "Backend is running",
-    port: process.env.PORT
+    name: 'Grounded Knowledge Assistant API',
+    version: '1.0.0',
+    endpoints: {
+      query: '/query',
+      audit: '/audit',
+      documents: '/documents',
+      health: '/health'
+    },
+    architecture: 'Governed AI Assistant with Audit Trail'
   });
 });
 
@@ -39,6 +67,16 @@ app.use((err, req, res, next) => {
 // IMPORTANT: This keeps the server alive
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Start server
+app.listen(port, () => {
+  console.log(`\n🚀 Grounded Knowledge Assistant API running on port ${port}`);
+  console.log(`\n📋 Available endpoints:`);
+  console.log(`   POST   /query          - Ask a question`);
+  console.log(`   GET    /audit          - View audit logs`);
+  console.log(`   GET    /audit/stats    - View audit statistics`);
+  console.log(`   GET    /audit/export   - Export audit logs`);
+  console.log(`   POST   /documents/upload - Upload document`);
+  console.log(`   GET    /documents      - List documents`);
+  console.log(`   GET    /health         - Health check`);
+  console.log(`\n✨ Ready for demo!`);
 });
