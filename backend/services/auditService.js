@@ -1,10 +1,66 @@
 const crypto = require("crypto");
+const fs = require("fs/promises");
+const path = require("path");
 const blobService = require("./blobService");
 
 const AUDIT_LOG_BLOB = process.env.AUDIT_LOG_BLOB || "audit_log_live.jsonl";
 const AUDIT_SCHEMA_BLOB = "audit_log_schema.json";
+const LOCAL_DATA_DIR = path.join(__dirname, "..", "data");
+const LOCAL_AUDIT_LOG_PATH = path.join(LOCAL_DATA_DIR, AUDIT_LOG_BLOB);
+
+const LOCAL_AUDIT_SCHEMA = {
+  title: "Local audit schema fallback",
+  required: [
+    "request_id",
+    "timestamp",
+    "full_query",
+    "full_response",
+    "decision_status",
+    "trust_score",
+    "risk_score",
+    "allow_flag",
+    "allowed_data_class",
+    "detected_data_class",
+    "conform_access_flag",
+    "violation_access_flag",
+    "sensitive_data_flag",
+    "prompt_abuse_flag",
+    "citation_insufficient_flag",
+    "blocked_rules_flag",
+    "warned_rules_flag",
+    "blocked_rule_ids",
+    "warned_rule_ids",
+    "citation_count",
+    "citations"
+  ]
+};
 
 let cachedSchema = null;
+
+function isLocalFallbackEnabled() {
+  return !process.env.AZURE_STORAGE_CONNECTION_STRING;
+}
+
+async function ensureLocalDataDir() {
+  await fs.mkdir(LOCAL_DATA_DIR, { recursive: true });
+}
+
+async function readLocalAuditLog() {
+  try {
+    return await fs.readFile(LOCAL_AUDIT_LOG_PATH, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function writeLocalAuditLog(content) {
+  await ensureLocalDataDir();
+  await fs.writeFile(LOCAL_AUDIT_LOG_PATH, content, "utf8");
+}
 
 /**
  * Write an audit record to the live audit log file
@@ -13,7 +69,7 @@ let cachedSchema = null;
  */
 async function writeAuditRecord(auditRecord) {
   const record = {
-    requestId: auditRecord.requestId || crypto.randomUUID(),
+    request_id: auditRecord.request_id || crypto.randomUUID(),
     timestamp: auditRecord.timestamp || new Date().toISOString(),
     ...auditRecord
   };
@@ -21,9 +77,16 @@ async function writeAuditRecord(auditRecord) {
   const schema = await getLockedAuditSchema();
   validateAgainstLockedSchema(record, schema);
 
-  const existing = await blobService.downloadBlob(AUDIT_LOG_BLOB);
+  const existing = isLocalFallbackEnabled()
+    ? await readLocalAuditLog()
+    : await blobService.downloadBlob(AUDIT_LOG_BLOB);
   const nextContent = `${existing || ""}${JSON.stringify(record)}\n`;
-  await blobService.uploadBlob(AUDIT_LOG_BLOB, nextContent);
+
+  if (isLocalFallbackEnabled()) {
+    await writeLocalAuditLog(nextContent);
+  } else {
+    await blobService.uploadBlob(AUDIT_LOG_BLOB, nextContent);
+  }
 
   return record;
 }
@@ -33,7 +96,9 @@ async function writeAuditRecord(auditRecord) {
  * @returns {Promise<array>} - Array of audit records
  */
 async function readAuditRecords() {
-  const content = await blobService.downloadBlob(AUDIT_LOG_BLOB);
+  const content = isLocalFallbackEnabled()
+    ? await readLocalAuditLog()
+    : await blobService.downloadBlob(AUDIT_LOG_BLOB);
   if (!content || !content.trim()) {
     return [];
   }
@@ -66,6 +131,11 @@ async function getAuditRecords(limit = 100, offset = 0) {
 
 async function getLockedAuditSchema() {
   if (cachedSchema) {
+    return cachedSchema;
+  }
+
+  if (isLocalFallbackEnabled()) {
+    cachedSchema = LOCAL_AUDIT_SCHEMA;
     return cachedSchema;
   }
 

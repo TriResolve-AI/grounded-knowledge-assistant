@@ -1,12 +1,68 @@
 const crypto = require("crypto");
+const fs = require("fs/promises");
+const path = require("path");
 const { BlobServiceClient } = require("@azure/storage-blob");
 
 const CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 const CONTAINER_NAME = process.env.AZURE_BLOB_CONTAINER_NAME || "audit";
 const AUDIT_LOG_BLOB = process.env.AUDIT_LOG_BLOB || "audit_log_live.jsonl";
 const AUDIT_SCHEMA_BLOB = "audit_log_schema.json";
+const LOCAL_DATA_DIR = path.join(__dirname, "..", "data");
+const LOCAL_AUDIT_LOG_PATH = path.join(LOCAL_DATA_DIR, AUDIT_LOG_BLOB);
+
+const LOCAL_AUDIT_SCHEMA = {
+  title: "Local audit schema fallback",
+  required: [
+    "request_id",
+    "timestamp",
+    "full_query",
+    "full_response",
+    "decision_status",
+    "trust_score",
+    "risk_score",
+    "allow_flag",
+    "allowed_data_class",
+    "detected_data_class",
+    "conform_access_flag",
+    "violation_access_flag",
+    "sensitive_data_flag",
+    "prompt_abuse_flag",
+    "citation_insufficient_flag",
+    "blocked_rules_flag",
+    "warned_rules_flag",
+    "blocked_rule_ids",
+    "warned_rule_ids",
+    "citation_count",
+    "citations"
+  ]
+};
 
 let cachedSchema = null;
+
+function isLocalFallbackEnabled() {
+  return !CONNECTION_STRING;
+}
+
+async function ensureLocalDataDir() {
+  await fs.mkdir(LOCAL_DATA_DIR, { recursive: true });
+}
+
+async function readLocalAuditLog() {
+  try {
+    return await fs.readFile(LOCAL_AUDIT_LOG_PATH, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function writeLocalAuditLog(content) {
+  await ensureLocalDataDir();
+  await fs.writeFile(LOCAL_AUDIT_LOG_PATH, content, "utf8");
+}
 
 function getContainerClient() {
   if (!CONNECTION_STRING) {
@@ -18,6 +74,16 @@ function getContainerClient() {
 }
 
 async function downloadBlobText(blobName) {
+  if (isLocalFallbackEnabled()) {
+    if (blobName === AUDIT_SCHEMA_BLOB) {
+      return JSON.stringify(LOCAL_AUDIT_SCHEMA);
+    }
+
+    if (blobName === AUDIT_LOG_BLOB) {
+      return readLocalAuditLog();
+    }
+  }
+
   const containerClient = getContainerClient();
   const blobClient = containerClient.getBlockBlobClient(blobName);
 
@@ -42,6 +108,15 @@ async function downloadBlobText(blobName) {
 }
 
 async function uploadBlobText(blobName, content) {
+  if (isLocalFallbackEnabled()) {
+    if (blobName !== AUDIT_LOG_BLOB) {
+      return;
+    }
+
+    await writeLocalAuditLog(content);
+    return;
+  }
+
   const containerClient = getContainerClient();
   await containerClient.createIfNotExists();
   const blobClient = containerClient.getBlockBlobClient(blobName);
@@ -54,6 +129,11 @@ async function uploadBlobText(blobName, content) {
 
 async function getLockedAuditSchema() {
   if (cachedSchema) {
+    return cachedSchema;
+  }
+
+  if (isLocalFallbackEnabled()) {
+    cachedSchema = LOCAL_AUDIT_SCHEMA;
     return cachedSchema;
   }
 

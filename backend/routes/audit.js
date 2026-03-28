@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const auditService = require("../services/auditService");
-const blobService = require("../services/blobService");
 
 /**
  * GET /audit-log - Retrieve live audit records
@@ -29,7 +28,7 @@ router.get("/audit-log", async (req, res) => {
  */
 router.get("/audit-log/schema", async (req, res) => {
   try {
-    const schema = await blobService.getAuditSchema();
+    const schema = await auditService.getLockedAuditSchema();
     res.json({
       success: true,
       schema
