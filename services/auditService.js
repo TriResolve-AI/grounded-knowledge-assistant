@@ -199,12 +199,80 @@ async function writeAuditRecord(auditRecord) {
 }
 
 async function getAuditRecords(limit = 100, offset = 0) {
-  const records = await readAuditRecords();
-  const total = records.length;
-  const start = Math.max(total - offset - limit, 0);
-  const end = Math.max(total - offset, 0);
-  const page = records.slice(start, end).reverse();
+  const containerClient = getContainerClient();
+  const blobClient = containerClient.getBlockBlobClient(AUDIT_LOG_BLOB);
 
+  const exists = await blobClient.exists();
+  if (!exists) {
+    return {
+      total: 0,
+      count: 0,
+      limit,
+      offset,
+      records: []
+    };
+  }
+
+  const downloadResponse = await blobClient.download(0);
+  const readableStream = downloadResponse.readableStreamBody;
+
+  if (!readableStream) {
+    return {
+      total: 0,
+      count: 0,
+      limit,
+      offset,
+      records: []
+    };
+  }
+
+  const tailSize = limit + offset;
+  const buffer = [];
+  let total = 0;
+  let leftover = "";
+
+  await new Promise((resolve, reject) => {
+    readableStream.on("data", (chunk) => {
+      const text = leftover + chunk.toString("utf8");
+      const lines = text.split("\n");
+      leftover = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue;
+        }
+
+        const record = JSON.parse(line);
+        total += 1;
+        buffer.push(record);
+
+        if (buffer.length > tailSize) {
+          buffer.shift();
+        }
+      }
+    });
+
+    readableStream.on("end", () => {
+      if (leftover && leftover.trim()) {
+        const record = JSON.parse(leftover);
+        total += 1;
+        buffer.push(record);
+
+        if (buffer.length > tailSize) {
+          buffer.shift();
+        }
+      }
+
+      resolve();
+    });
+
+    readableStream.on("error", reject);
+  });
+
+  const effectiveLength = buffer.length;
+  const start = Math.max(effectiveLength - offset - limit, 0);
+  const end = Math.max(effectiveLength - offset, 0);
+  const page = buffer.slice(start, end).reverse();
   return {
     total,
     count: page.length,
