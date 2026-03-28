@@ -1,147 +1,171 @@
-// backend/services/auditService.js
-const { blobServiceClient } = require("../config/azureConfig");
-const { v4: uuidv4 } = require('uuid');
+const crypto = require("crypto");
+const fs = require("fs/promises");
+const path = require("path");
+const blobService = require("./blobService");
 
-class AuditService {
-  constructor() {
-    this.blobServiceClient = blobServiceClient;
-    this.containerName = "audit-logs";
-    this.auditBuffer = [];
-    this.bufferSize = 10; // Write to blob every 10 records
-  }
+const AUDIT_LOG_BLOB = process.env.AUDIT_LOG_BLOB || "audit_log_live.jsonl";
+const AUDIT_SCHEMA_BLOB = "audit_log_schema.json";
+const LOCAL_DATA_DIR = path.join(__dirname, "..", "data");
+const LOCAL_AUDIT_LOG_PATH = path.join(LOCAL_DATA_DIR, AUDIT_LOG_BLOB);
 
-  /**
-   * Write audit record according to architecture contract
-   */
-  async writeAuditRecord(ragRequest, ragResponse, governanceOutput) {
-    const auditRecord = {
-      // Required fields from architecture
-      timestamp: new Date().toISOString(),
-      request_id: ragResponse.request_id || uuidv4(),
-      query: ragRequest.query,
-      decision_status: ragResponse.decision_status,
-      trust_score: ragResponse.trust_score,
-      user_disclaimer: ragResponse.disclaimer,
-      
-      // Citation details
-      citation_count: ragResponse.citations.length,
-      citations: ragResponse.citations.map(c => ({
-        doc_id: c.doc_id,
-        chunk_id: c.chunk_id,
-        similarity_score: c.similarity_score,
-        is_active_version: c.is_active_version,
-        doc_version: c.metadata?.doc_version
-      })),
-      
-      // Governance details
-      blocked_rule_ids: governanceOutput?.blocked_rule_ids || [],
-      warned_rule_ids: governanceOutput?.warned_rule_ids || [],
-      
-      // Response details
-      answer_preview: ragResponse.answer?.substring(0, 500),
-      status: ragResponse.status,
-      message: ragResponse.message,
-      
-      // Additional metadata for dashboard
-      metadata: {
-        processing_time_ms: ragResponse.processing_time_ms,
-        model_used: process.env.AZURE_OPENAI_DEPLOYMENT,
-        retrieval_top_k: 5
-      }
-    };
+const LOCAL_AUDIT_SCHEMA = {
+  title: "Local audit schema fallback",
+  required: [
+    "request_id",
+    "timestamp",
+    "full_query",
+    "full_response",
+    "decision_status",
+    "trust_score",
+    "risk_score",
+    "allow_flag",
+    "allowed_data_class",
+    "detected_data_class",
+    "conform_access_flag",
+    "violation_access_flag",
+    "sensitive_data_flag",
+    "prompt_abuse_flag",
+    "citation_insufficient_flag",
+    "blocked_rules_flag",
+    "warned_rules_flag",
+    "blocked_rule_ids",
+    "warned_rule_ids",
+    "citation_count",
+    "citations"
+  ]
+};
 
-    // Add to buffer
-    this.auditBuffer.push(auditRecord);
-    
-    // Write to blob if buffer is full
-    if (this.auditBuffer.length >= this.bufferSize) {
-      await this.flushAuditBuffer();
+let cachedSchema = null;
+
+function isLocalFallbackEnabled() {
+  return !process.env.AZURE_STORAGE_CONNECTION_STRING;
+}
+
+async function ensureLocalDataDir() {
+  await fs.mkdir(LOCAL_DATA_DIR, { recursive: true });
+}
+
+async function readLocalAuditLog() {
+  try {
+    return await fs.readFile(LOCAL_AUDIT_LOG_PATH, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
     }
-    
-    // Also log to console for debugging
-    console.log(`[AUDIT] ${auditRecord.request_id} - ${auditRecord.decision_status} (${auditRecord.trust_score})`);
-    
-    return auditRecord;
-  }
 
-  /**
-   * Flush audit buffer to Azure Blob Storage
-   */
-  async flushAuditBuffer() {
-    if (this.auditBuffer.length === 0) return;
-    
-    try {
-      const containerClient = this.blobServiceClient.getContainerClient(this.containerName);
-      
-      // Ensure container exists
-      await containerClient.createIfNotExists();
-      
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const blobName = `audit_${timestamp}_${uuidv4()}.jsonl`;
-      const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-      
-      // Convert audit records to JSONL format
-      const auditData = this.auditBuffer.map(record => JSON.stringify(record)).join('\n');
-      
-      await blockBlobClient.upload(auditData, auditData.length);
-      console.log(`[AUDIT] Flushed ${this.auditBuffer.length} records to ${blobName}`);
-      
-      // Clear buffer
-      this.auditBuffer = [];
-    } catch (error) {
-      console.error("[AUDIT] Error flushing buffer:", error);
-    }
-  }
-
-  /**
-   * Get audit logs for Power BI dashboard
-   */
-  async getAuditLogs(options = {}) {
-    const { limit = 100, offset = 0, filter = null } = options;
-    
-    try {
-      const containerClient = this.blobServiceClient.getContainerClient(this.containerName);
-      const logs = [];
-      
-      // List all blobs (most recent first)
-      const blobs = [];
-      for await (const blob of containerClient.listBlobsFlat()) {
-        blobs.push(blob);
-      }
-      
-      // Sort by last modified (newest first)
-      blobs.sort((a, b) => b.lastModified - a.lastModified);
-      
-      // Read recent blobs
-      let count = 0;
-      for (const blob of blobs.slice(offset, offset + limit)) {
-        const blockBlobClient = containerClient.getBlockBlobClient(blob.name);
-        const content = await blockBlobClient.downloadToBuffer();
-        const lines = content.toString().split('\n').filter(line => line.trim());
-        
-        for (const line of lines) {
-          try {
-            const record = JSON.parse(line);
-            logs.push(record);
-            count++;
-            if (count >= limit) break;
-          } catch (e) {
-            console.warn(`[AUDIT] Invalid JSON in ${blob.name}`);
-          }
-        }
-        
-        if (count >= limit) break;
-      }
-      
-      return {
-        total: logs.length,
-        logs: logs
-      };
-    } catch (error) {
-      console.error("[AUDIT] Error getting logs:", error);
-      return { total: 0, logs: [] };
-    }
+    throw error;
   }
 }
 
-module.exports = new AuditService();
+async function writeLocalAuditLog(line) {
+  await ensureLocalDataDir();
+  await fs.appendFile(LOCAL_AUDIT_LOG_PATH, line, "utf8");
+}
+
+/**
+ * Write an audit record to the live audit log file
+ * @param {object} auditRecord - Audit record to write (should conform to audit_log_schema.json)
+ * @returns {Promise<void>}
+ */
+async function writeAuditRecord(auditRecord) {
+  const requestIdValue =
+    auditRecord.request_id || auditRecord.requestId || crypto.randomUUID();
+  const record = {
+    ...auditRecord,
+    request_id: requestIdValue,
+    timestamp: auditRecord.timestamp || new Date().toISOString()
+  };
+  // Ensure consistent snake_case field name (remove camelCase duplicate if spread re-introduced it)
+  delete record.requestId;
+
+  const schema = await getLockedAuditSchema();
+  validateAgainstLockedSchema(record, schema);
+
+  const line = `${JSON.stringify(record)}\n`;
+
+  if (isLocalFallbackEnabled()) {
+    await writeLocalAuditLog(line);
+  } else {
+    await blobService.appendBlobLine(AUDIT_LOG_BLOB, line);
+  }
+
+  return record;
+}
+
+/**
+ * Read all audit records from the live audit log file
+ * @returns {Promise<array>} - Array of audit records
+ */
+async function readAuditRecords() {
+  const content = isLocalFallbackEnabled()
+    ? await readLocalAuditLog()
+    : await blobService.downloadBlob(AUDIT_LOG_BLOB);
+  if (!content || !content.trim()) {
+    return [];
+  }
+
+  const records = [];
+  for (const line of content.split("\n").filter((l) => l.trim().length > 0)) {
+    try {
+      records.push(JSON.parse(line));
+    } catch (err) {
+      console.warn("Failed to parse audit log line, skipping:", err.message);
+    }
+  }
+  return records;
+}
+
+/**
+ * Get recent audit records (paginated)
+ * @param {number} limit - Number of records to return
+ * @param {number} offset - Number of records to skip
+ * @returns {Promise<object>} - Paginated audit records
+ */
+async function getAuditRecords(limit = 100, offset = 0) {
+  const allRecords = await readAuditRecords();
+  const total = allRecords.length;
+  const records = allRecords.slice(-limit - offset, -offset || undefined).reverse();
+
+  return {
+    total,
+    count: records.length,
+    limit,
+    offset,
+    records
+  };
+}
+
+async function getLockedAuditSchema() {
+  if (cachedSchema) {
+    return cachedSchema;
+  }
+
+  if (isLocalFallbackEnabled()) {
+    cachedSchema = LOCAL_AUDIT_SCHEMA;
+    return cachedSchema;
+  }
+
+  const schemaContent = await blobService.downloadBlob(AUDIT_SCHEMA_BLOB);
+  if (!schemaContent) {
+    throw new Error("Locked schema audit_log_schema.json was not found in audit container");
+  }
+
+  cachedSchema = JSON.parse(schemaContent);
+  return cachedSchema;
+}
+
+function validateAgainstLockedSchema(record, schema) {
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const missing = required.filter((field) => record[field] === undefined || record[field] === null);
+
+  if (missing.length > 0) {
+    throw new Error(`Audit record missing required schema fields: ${missing.join(", ")}`);
+  }
+}
+
+module.exports = {
+  getLockedAuditSchema,
+  writeAuditRecord,
+  readAuditRecords,
+  getAuditRecords
+};

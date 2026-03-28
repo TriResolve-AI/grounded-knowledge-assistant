@@ -1,3 +1,5 @@
+data/audit_log_live.jsonl
+services/data/
 node_modules/
 dist/
 build/

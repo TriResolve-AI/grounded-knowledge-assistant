@@ -1,15 +1,11 @@
-// backend/server.js
-const express = require('express');
-const cors = require('cors');
-require('dotenv').config({ path: '../.env' });
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
 
-// Import routes
-const queryRoutes = require('./routes/query');
-const auditRoutes = require('./routes/audit');
-const documentRoutes = require('./routes/documents');
+const queryRoutes = require("./routes/query");
+const auditRoutes = require("./routes/audit");
 
 const app = express();
-const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -55,14 +51,21 @@ app.get('/', (req, res) => {
   });
 });
 
+// Mount routes
+app.use(queryRoutes);
+app.use(auditRoutes);
+
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.stack);
+  console.error(err.stack);
   res.status(500).json({
-    success: false,
-    error: err.message || 'Internal server error'
+    error: "Internal server error",
+    message: err.message
   });
 });
+
+// IMPORTANT: This keeps the server alive
+const PORT = process.env.PORT || 3000;
 
 // Start server
 app.listen(port, () => {

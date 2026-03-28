@@ -9,6 +9,7 @@ app.use(express.json());
 // Import services
 const searchService = require('./services/searchService');
 const governance = require('./services/governance');
+const auditService = require('./services/auditService');
 
 // Debug log to confirm execution
 console.log("Starting server...");
@@ -63,6 +64,38 @@ app.post("/govern", async (req, res) => {
 });
 
 // RAG pipeline route for full governance + search
+/**
+ * Build a schema-compliant audit record from a RAG result and the originating query.
+ * @param {object} result - Response from searchService.processUserQuery
+ * @param {string} query - The original user query
+ * @returns {object}
+ */
+function buildAuditRecord(result, query) {
+  return {
+    timestamp: new Date().toISOString(),
+    request_id: result.request_id,
+    full_query: query,
+    full_response: result.answer || '',
+    decision_status: result.decision_status || 'BLOCK',
+    trust_score: result.trust_score ?? 0,
+    risk_score: result.risk_score ?? 1,
+    allow_flag: result.flags?.allow_flag ?? false,
+    allowed_data_class: result.flags?.allowed_data_class || 'public',
+    detected_data_class: result.flags?.detected_data_class || 'public',
+    conform_access_flag: result.flags?.conform_access_flag ?? false,
+    violation_access_flag: result.flags?.violation_access_flag ?? true,
+    sensitive_data_flag: result.flags?.sensitive_data_flag ?? false,
+    prompt_abuse_flag: result.flags?.prompt_abuse_flag ?? false,
+    citation_insufficient_flag: result.flags?.citation_insufficient_flag ?? true,
+    blocked_rules_flag: result.flags?.blocked_rules_flag ?? false,
+    warned_rules_flag: result.flags?.warned_rules_flag ?? false,
+    blocked_rule_ids: result.blocked_rule_ids || [],
+    warned_rule_ids: result.warned_rule_ids || [],
+    citation_count: Array.isArray(result.citations) ? result.citations.length : 0,
+    citations: result.citations || []
+  };
+}
+
 app.post('/rag', async (req, res) => {
   try {
     const { query, user_role } = req.body;
@@ -71,6 +104,13 @@ app.post('/rag', async (req, res) => {
     }
 
     const result = await searchService.processUserQuery(query, user_role);
+
+    try {
+      await auditService.writeAuditRecord(buildAuditRecord(result, query));
+    } catch (auditError) {
+      console.warn('Audit write failed:', auditError.message);
+    }
+
     if (result.status === 'error') {
       return res.status(500).json(result);
     }
@@ -78,6 +118,44 @@ app.post('/rag', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('RAG error:', error.message);
+    
+    // Write error audit record
+    try {
+      await auditService.writeAuditRecord({
+        full_query: (req.body && req.body.query) ? req.body.query : '',
+        full_response: '',
+        decision_status: 'error',
+        trust_score: 0,
+        risk_score: 1,
+        allow_flag: false,
+        allowed_data_class: 'public',
+        detected_data_class: 'public',
+        conform_access_flag: false,
+        violation_access_flag: true,
+        sensitive_data_flag: false,
+        prompt_abuse_flag: false,
+        citation_insufficient_flag: true,
+        blocked_rules_flag: true,
+        warned_rules_flag: false,
+        blocked_rule_ids: [],
+        warned_rule_ids: [],
+        citation_count: 0,
+        citations: [],
+        errorMessage: error.message,
+        // Schema-required fields with safe defaults for error path
+        full_query: (req.body && req.body.query) ? req.body.query : '',
+        full_response: null,
+        decision_status: 'error',
+        citations: [],
+        flags: {
+          safety_violation: false,
+          policy_block: false
+        }
+      });
+    } catch (auditError) {
+      console.error('Error writing error audit record:', auditError);
+    }
+
     res.status(500).json({ error: error.message });
   }
 });
@@ -95,6 +173,13 @@ app.get('/rag', async (req, res) => {
     }
 
     const result = await searchService.processUserQuery(query, user_role);
+
+    try {
+      await auditService.writeAuditRecord(buildAuditRecord(result, query));
+    } catch (auditError) {
+      console.warn('Audit write failed:', auditError.message);
+    }
+
     if (result.status === 'error') {
       return res.status(500).json(result);
     }
@@ -102,8 +187,47 @@ app.get('/rag', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('RAG GET error:', error.message);
+
     res.status(500).json({ error: error.message });
   }
+});
+
+// Audit log routes — only available when AUDIT_LOG_ENABLED=true
+const auditLogEnabled = process.env.AUDIT_LOG_ENABLED === 'true';
+
+app.get('/audit-log', async (req, res) => {
+  if (!auditLogEnabled) {
+    return res.status(403).json({ error: 'Audit log endpoint is disabled. Set AUDIT_LOG_ENABLED=true to enable.' });
+  }
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+    const auditData = await auditService.getAuditRecords(limit, offset);
+
+    res.json({
+      success: true,
+      data: auditData
+    });
+  } catch (error) {
+    console.error('Error retrieving audit logs:', error);
+    res.status(500).json({ error: 'Failed to retrieve audit logs' });
+  }
+});
+
+app.get('/audit-log/schema', (req, res) => {
+  if (!auditLogEnabled) {
+    return res.status(403).json({ error: 'Audit log endpoint is disabled. Set AUDIT_LOG_ENABLED=true to enable.' });
+  }
+  auditService
+    .getLockedAuditSchema()
+    .then((schema) => {
+      res.json({ success: true, schema });
+    })
+    .catch((error) => {
+      console.error('Error retrieving audit schema:', error.message);
+      res.status(500).json({ error: 'Failed to retrieve locked audit schema' });
+    });
 });
 
 // IMPORTANT: This keeps the server alive
