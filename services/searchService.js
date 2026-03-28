@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const governance = require('./governance');
 const openaiService = require('./openaiService');
 
@@ -193,16 +194,107 @@ async function generateLLMAnswer(sanitizedQuery, raw_citations) {
     return await openaiService.callOpenAI(prompt);
 }
 
-async function processUserQuery(user_query, user_role) {
+function buildFlags({
+    decision_status,
+    allowed_data_class,
+    detected_data_class,
+    citation_count
+}) {
+    const allow_flag = decision_status === 'ALLOW';
+    const blocked_rules_flag = decision_status === 'BLOCK';
+    const warned_rules_flag = decision_status === 'REDACT' || decision_status === 'DEFER';
+
+    return {
+        allow_flag,
+        allowed_data_class,
+        detected_data_class,
+        conform_access_flag: allow_flag,
+        violation_access_flag: !allow_flag,
+        sensitive_data_flag: false,
+        prompt_abuse_flag: false,
+        citation_insufficient_flag: citation_count === 0,
+        blocked_rules_flag,
+        warned_rules_flag
+    };
+}
+
+function mapFilterCategoryToGovRuleIds(category) {
+    const mapping = {
+        PII_DETECTED: ['GOV-001'],
+        ACCESS_DENIED: ['GOV-001'],
+        PROMPT_INJECTION: ['GOV-002'],
+        OUT_OF_SCOPE: ['GOV-002']
+    };
+
+    return mapping[category] || [];
+}
+
+function buildRagResponse({
+    request_id,
+    answer,
+    disclaimer,
+    message,
+    decision_status,
+    trust_score,
+    risk_score,
+    citations,
+    flags,
+    blocked_rule_ids,
+    warned_rule_ids
+}) {
+    let status = 'success';
+    if (decision_status === 'REDACT') {
+        status = 'warning';
+    } else if (decision_status === 'DEFER') {
+        status = 'escalated';
+    } else if (decision_status === 'BLOCK') {
+        status = 'blocked';
+    }
+
+    return {
+        status,
+        request_id,
+        answer: answer || '',
+        disclaimer: disclaimer || '',
+        message: message || '',
+        decision_status,
+        trust_score,
+        risk_score,
+        citations,
+        flags,
+        blocked_rule_ids,
+        warned_rule_ids
+    };
+}
+
+async function processUserQuery(user_query, user_role, request_id = null) {
     try {
+        const requestId = request_id || crypto.randomUUID();
         const filterEngine = new governance.GovernanceFilter();
         const filterResult = await filterEngine.evaluate(user_query, user_role);
 
         if (!filterResult.allowed) {
-            return {
-                status: 'blocked',
-                reason: filterResult.reason
-            };
+            const blockedRuleIds = mapFilterCategoryToGovRuleIds(filterResult.category);
+            const blockedFlags = buildFlags({
+                decision_status: 'BLOCK',
+                allowed_data_class: 'public',
+                detected_data_class: 'public',
+                citation_count: 0
+            });
+
+            return buildRagResponse({
+                request_id: requestId,
+                answer: '',
+                disclaimer: 'The response is blocked due to policy.',
+                message: filterResult.reason || 'Query blocked by governance policy.',
+                decision_status: 'BLOCK',
+                trust_score: 0,
+                risk_score: 1,
+                citations: [],
+                flags: blockedFlags,
+                blocked_rule_ids: blockedRuleIds,
+                warned_rule_ids: []
+            });
         }
 
         const sanitized_query = filterResult.sanitized_query;
@@ -212,15 +304,15 @@ async function processUserQuery(user_query, user_role) {
         const llm_draft_response = await generateLLMAnswer(sanitized_query, raw_citations);
 
         const formatted_citations = raw_citations.map(c => new governance.Citation({
-            source_id: c.doc_id,
+            doc_id: c.doc_id,
             chunk_id: c.chunk_id,
-            relevance_score: c.similarity_score,
-            is_current_version: c.is_active_version
+            similarity_score: c.similarity_score,
+            is_active_version: c.is_active_version
         }));
 
         const risk_engine = new governance.RiskScorer();
-        const risk_score = await risk_engine.score(llm_draft_response, formatted_citations);
-        const risk_dict = risk_score.to_dict();
+        const riskScoreResult = await risk_engine.score(llm_draft_response, formatted_citations);
+        const risk_dict = riskScoreResult.to_dict();
 
         const compliance_engine = new governance.ComplianceEngine();
         const compliance_report = await compliance_engine.evaluate({
@@ -239,37 +331,75 @@ async function processUserQuery(user_query, user_role) {
             trust_score: risk_dict.trust_score
         });
 
-        if (compliance_report.decision_status === 'ALLOW') {
-            return {
-                status: 'success',
-                answer: llm_draft_response,
-                trust_score: risk_dict.trust_score,
-                citations: raw_citations
-            };
-        } else if (compliance_report.decision_status === 'REDACT') {
-            return {
-                status: 'warning',
-                answer: llm_draft_response,
-                disclaimer: compliance_report.user_disclaimer,
-                trust_score: risk_dict.trust_score
-            };
-        } else if (compliance_report.decision_status === 'DEFER') {
-            return {
-                status: 'escalated',
-                message: 'This query requires human-in-the-loop review.',
-                disclaimer: compliance_report.user_disclaimer
-            };
+        const decision_status = compliance_report.decision_status;
+        const trust_score = Number((risk_dict.trust_score || 0).toFixed(4));
+        const risk_score = Number((1 - trust_score).toFixed(4));
+        const allowed_data_class = (allowed_data_classes && allowed_data_classes[0]) || 'public';
+        const detected_data_class = raw_citations.length > 0 ? 'public' : allowed_data_class;
+
+        const flags = buildFlags({
+            decision_status,
+            allowed_data_class,
+            detected_data_class,
+            citation_count: raw_citations.length
+        });
+
+        let answer = '';
+        let disclaimer = '';
+        let message = '';
+
+        if (decision_status === 'ALLOW') {
+            answer = llm_draft_response;
+        } else if (decision_status === 'REDACT') {
+            answer = llm_draft_response;
+            disclaimer = compliance_report.user_disclaimer || '';
+        } else if (decision_status === 'DEFER') {
+            disclaimer = compliance_report.user_disclaimer || '';
+            message = 'This query requires human-in-the-loop review.';
+        } else {
+            disclaimer = compliance_report.user_disclaimer || 'The response is blocked due to policy.';
+            message = 'Response blocked by governance policy.';
         }
 
-        return {
-            status: 'blocked',
-            message: compliance_report.user_disclaimer
-        };
+        return buildRagResponse({
+            request_id: requestId,
+            answer,
+            disclaimer,
+            message,
+            decision_status,
+            trust_score,
+            risk_score,
+            citations: raw_citations,
+            flags,
+            blocked_rule_ids: [],
+            warned_rule_ids: []
+        });
     } catch (error) {
         console.error('[RAG] processUserQuery error', error.message);
         return {
             status: 'error',
+            request_id: request_id || crypto.randomUUID(),
+            answer: '',
+            disclaimer: '',
             message: 'Internal processing error',
+            decision_status: 'BLOCK',
+            trust_score: 0,
+            risk_score: 1,
+            citations: [],
+            flags: {
+                allow_flag: false,
+                allowed_data_class: 'public',
+                detected_data_class: 'public',
+                conform_access_flag: false,
+                violation_access_flag: true,
+                sensitive_data_flag: false,
+                prompt_abuse_flag: false,
+                citation_insufficient_flag: true,
+                blocked_rules_flag: true,
+                warned_rules_flag: false
+            },
+            blocked_rule_ids: [],
+            warned_rule_ids: [],
             detail: error.message
         };
     }

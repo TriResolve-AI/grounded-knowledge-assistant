@@ -4,10 +4,9 @@
 class GovernanceFilter {
     constructor() {
         this.blockedPatterns = [
-            /ssn|social security number/i,
-            /drop\s+table/i,
-            /password/i,
-            /eval\(/i
+            { pattern: /ssn|social security number/i, category: 'PII_DETECTED' },
+            { pattern: /password|credential|token|secret/i, category: 'ACCESS_DENIED' },
+            { pattern: /drop\s+table|eval\(|prompt injection|ignore previous/i, category: 'PROMPT_INJECTION' }
         ];
     }
 
@@ -17,10 +16,22 @@ class GovernanceFilter {
             return { allowed: false, reason: 'Empty query' };
         }
 
-        for (const pattern of this.blockedPatterns) {
-            if (pattern.test(cleaned)) {
-                return { allowed: false, reason: 'Query contains blocked content' };
+        for (const blocked of this.blockedPatterns) {
+            if (blocked.pattern.test(cleaned)) {
+                return {
+                    allowed: false,
+                    reason: 'Query contains blocked content',
+                    category: blocked.category
+                };
             }
+        }
+
+        if (cleaned.length < 3) {
+            return {
+                allowed: false,
+                reason: 'Query is out of scope',
+                category: 'OUT_OF_SCOPE'
+            };
         }
 
         const sanitized_query = cleaned.replace(/\s+/g, ' ');
@@ -47,11 +58,11 @@ class GovernanceFilter {
 }
 
 class Citation {
-    constructor({ source_id, chunk_id, relevance_score, is_current_version }) {
-        this.source_id = source_id;
+    constructor({ doc_id, chunk_id, similarity_score, is_active_version }) {
+        this.doc_id = doc_id;
         this.chunk_id = chunk_id;
-        this.relevance_score = relevance_score;
-        this.is_current_version = Boolean(is_current_version);
+        this.similarity_score = similarity_score;
+        this.is_active_version = Boolean(is_active_version);
     }
 }
 
@@ -74,7 +85,7 @@ class RiskScore {
 class RiskScorer {
     async score(response_text, citations = []) {
         const baseScore = citations.length > 0 ? 0.6 : 0.35;
-        const citationQuality = citations.filter(c => c.is_current_version).length / (citations.length || 1);
+        const citationQuality = citations.filter(c => c.is_active_version).length / (citations.length || 1);
         const lengthFactor = Math.min(Math.max((response_text || '').length / 250, 0.1), 1);
 
         const trust_score = Math.min(1, baseScore + citationQuality * 0.25 + lengthFactor * 0.15);

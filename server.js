@@ -71,20 +71,33 @@ app.post('/rag', async (req, res) => {
       return res.status(400).json({ error: 'query and user_role are required' });
     }
 
-    // One audit record per RAG request, aligned to locked schema field names.
+    const result = await searchService.processUserQuery(query, user_role);
+
     const auditRecord = {
-      action: 'rag_query',
-      query,
-      user_role,
-      method: req.method,
-      path: req.path,
-      userAgent: req.get('user-agent') || null,
-      status: 'initiated'
+      timestamp: new Date().toISOString(),
+      request_id: result.request_id,
+      full_query: query,
+      full_response: result.answer || '',
+      decision_status: result.decision_status || 'BLOCK',
+      trust_score: result.trust_score ?? 0,
+      risk_score: result.risk_score ?? 1,
+      allow_flag: result.flags?.allow_flag ?? false,
+      allowed_data_class: result.flags?.allowed_data_class || 'public',
+      detected_data_class: result.flags?.detected_data_class || 'public',
+      conform_access_flag: result.flags?.conform_access_flag ?? false,
+      violation_access_flag: result.flags?.violation_access_flag ?? true,
+      sensitive_data_flag: result.flags?.sensitive_data_flag ?? false,
+      prompt_abuse_flag: result.flags?.prompt_abuse_flag ?? false,
+      citation_insufficient_flag: result.flags?.citation_insufficient_flag ?? true,
+      blocked_rules_flag: result.flags?.blocked_rules_flag ?? false,
+      warned_rules_flag: result.flags?.warned_rules_flag ?? false,
+      blocked_rule_ids: result.blocked_rule_ids || [],
+      warned_rule_ids: result.warned_rule_ids || [],
+      citation_count: Array.isArray(result.citations) ? result.citations.length : 0,
+      citations: result.citations || []
     };
 
     await auditService.writeAuditRecord(auditRecord);
-
-    const result = await searchService.processUserQuery(query, user_role);
 
     if (result.status === 'error') {
       return res.status(500).json(result);
@@ -121,38 +134,31 @@ app.get('/rag', async (req, res) => {
       });
     }
 
-    // Write incoming request audit record
-    const auditRecord = {
-      action: 'rag_query',
-      query,
-      user_role,
-      method: req.method,
-      path: req.path,
-      userAgent: req.get('user-agent') || null,
-      status: 'initiated'
-    };
-
-    try {
-      await auditService.writeAuditRecord(auditRecord);
-    } catch (auditError) {
-      console.error('Error writing initial audit record:', auditError);
-    }
-
     const result = await searchService.processUserQuery(query, user_role);
-    
-    // Write completion audit record
-    try {
-      await auditService.writeAuditRecord({
-        action: 'rag_query',
-        query,
-        user_role,
-        status: result.status === 'error' ? 'error' : 'success',
-        resultStatus: result.status,
-        hasResults: result.results ? result.results.length > 0 : false
-      });
-    } catch (auditError) {
-      console.error('Error writing completion audit record:', auditError);
-    }
+
+    await auditService.writeAuditRecord({
+      timestamp: new Date().toISOString(),
+      request_id: result.request_id,
+      full_query: query,
+      full_response: result.answer || '',
+      decision_status: result.decision_status || 'BLOCK',
+      trust_score: result.trust_score ?? 0,
+      risk_score: result.risk_score ?? 1,
+      allow_flag: result.flags?.allow_flag ?? false,
+      allowed_data_class: result.flags?.allowed_data_class || 'public',
+      detected_data_class: result.flags?.detected_data_class || 'public',
+      conform_access_flag: result.flags?.conform_access_flag ?? false,
+      violation_access_flag: result.flags?.violation_access_flag ?? true,
+      sensitive_data_flag: result.flags?.sensitive_data_flag ?? false,
+      prompt_abuse_flag: result.flags?.prompt_abuse_flag ?? false,
+      citation_insufficient_flag: result.flags?.citation_insufficient_flag ?? true,
+      blocked_rules_flag: result.flags?.blocked_rules_flag ?? false,
+      warned_rules_flag: result.flags?.warned_rules_flag ?? false,
+      blocked_rule_ids: result.blocked_rule_ids || [],
+      warned_rule_ids: result.warned_rule_ids || [],
+      citation_count: Array.isArray(result.citations) ? result.citations.length : 0,
+      citations: result.citations || []
+    });
 
     if (result.status === 'error') {
       return res.status(500).json(result);
@@ -161,17 +167,6 @@ app.get('/rag', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('RAG GET error:', error.message);
-    
-    // Write error audit record
-    try {
-      await auditService.writeAuditRecord({
-        action: 'rag_query',
-        status: 'error',
-        errorMessage: error.message
-      });
-    } catch (auditError) {
-      console.error('Error writing error audit record:', auditError);
-    }
 
     res.status(500).json({ error: error.message });
   }

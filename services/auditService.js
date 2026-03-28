@@ -89,7 +89,7 @@ async function readAuditRecords() {
 
 async function writeAuditRecord(auditRecord) {
   const record = {
-    requestId: auditRecord.requestId || crypto.randomUUID(),
+    request_id: auditRecord.request_id || crypto.randomUUID(),
     timestamp: auditRecord.timestamp || new Date().toISOString(),
     ...auditRecord
   };
