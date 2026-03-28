@@ -6,46 +6,63 @@ const { SearchIndexClient, SearchClient, AzureKeyCredential } = require("@azure/
 const { OpenAIClient, AzureKeyCredential: OAICredential } = require("@azure/openai");
 const { DocumentAnalysisClient } = require("@azure/ai-form-recognizer");
 
-// ─── Blob ─────────────────────────────────────────────────────────────────────
-const blobServiceClient = process.env.AZURE_STORAGE_CONNECTION_STRING
-  ? BlobServiceClient.fromConnectionString(process.env.AZURE_STORAGE_CONNECTION_STRING)
-  : null;
+function warnMissing(service, vars) {
+  console.warn(
+    `[azureConfig] ${service} client not configured — missing env var(s): ${vars.join(", ")}. ` +
+    `Routes that depend on this service will return 503 until the vars are set.`
+  );
+}
 
-const containerClient = blobServiceClient
-  ? blobServiceClient.getContainerClient(process.env.AZURE_BLOB_CONTAINER_NAME || "raw-documents")
-  : null;
+// ─── Blob ─────────────────────────────────────────────────────────────────────
+let blobServiceClient = null;
+let containerClient = null;
+if (process.env.AZURE_STORAGE_CONNECTION_STRING) {
+  blobServiceClient = BlobServiceClient.fromConnectionString(process.env.AZURE_STORAGE_CONNECTION_STRING);
+  containerClient = blobServiceClient.getContainerClient(process.env.AZURE_BLOB_CONTAINER_NAME || "raw-documents");
+} else {
+  warnMissing("Blob Storage", ["AZURE_STORAGE_CONNECTION_STRING"]);
+}
 
 // ─── Search ───────────────────────────────────────────────────────────────────
-const searchIndexClient = (process.env.AZURE_SEARCH_ENDPOINT && process.env.AZURE_SEARCH_KEY)
-  ? new SearchIndexClient(
-      process.env.AZURE_SEARCH_ENDPOINT,
-      new AzureKeyCredential(process.env.AZURE_SEARCH_KEY)
-    )
-  : null;
-
-const searchClient = (process.env.AZURE_SEARCH_ENDPOINT && process.env.AZURE_SEARCH_KEY)
-  ? new SearchClient(
-      process.env.AZURE_SEARCH_ENDPOINT,
-      process.env.AZURE_SEARCH_INDEX || "documents",
-      new AzureKeyCredential(process.env.AZURE_SEARCH_KEY)
-    )
-  : null;
+let searchIndexClient = null;
+let searchClient = null;
+if (process.env.AZURE_SEARCH_ENDPOINT && process.env.AZURE_SEARCH_KEY) {
+  searchIndexClient = new SearchIndexClient(
+    process.env.AZURE_SEARCH_ENDPOINT,
+    new AzureKeyCredential(process.env.AZURE_SEARCH_KEY)
+  );
+  searchClient = new SearchClient(
+    process.env.AZURE_SEARCH_ENDPOINT,
+    process.env.AZURE_SEARCH_INDEX || "documents",
+    new AzureKeyCredential(process.env.AZURE_SEARCH_KEY)
+  );
+} else {
+  warnMissing("Azure Search", ["AZURE_SEARCH_ENDPOINT", "AZURE_SEARCH_KEY"]);
+}
 
 // ─── OpenAI ───────────────────────────────────────────────────────────────────
-const openaiClient = (process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_API_KEY)
-  ? new OpenAIClient(
-      process.env.AZURE_OPENAI_ENDPOINT,
-      new OAICredential(process.env.AZURE_OPENAI_API_KEY)
-    )
-  : null;
+// Support both AZURE_OPENAI_API_KEY (Azure SDK convention) and AZURE_OPENAI_KEY (repo legacy)
+const azureOpenAiKey = process.env.AZURE_OPENAI_API_KEY || process.env.AZURE_OPENAI_KEY;
+let openaiClient = null;
+if (process.env.AZURE_OPENAI_ENDPOINT && azureOpenAiKey) {
+  openaiClient = new OpenAIClient(
+    process.env.AZURE_OPENAI_ENDPOINT,
+    new OAICredential(azureOpenAiKey)
+  );
+} else {
+  warnMissing("Azure OpenAI", ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY (or AZURE_OPENAI_KEY)"]);
+}
 
 // ─── Document Intelligence ────────────────────────────────────────────────────
-const docIntelligenceClient = (process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT && process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY)
-  ? new DocumentAnalysisClient(
-      process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
-      new AzureKeyCredential(process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY)
-    )
-  : null;
+let docIntelligenceClient = null;
+if (process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT && process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY) {
+  docIntelligenceClient = new DocumentAnalysisClient(
+    process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+    new AzureKeyCredential(process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY)
+  );
+} else {
+  warnMissing("Document Intelligence", ["AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "AZURE_DOCUMENT_INTELLIGENCE_API_KEY"]);
+}
 
 module.exports = {
   blobServiceClient,

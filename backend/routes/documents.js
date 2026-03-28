@@ -45,6 +45,13 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         error: "No file uploaded"
       });
     }
+
+    if (!blobServiceClient) {
+      return res.status(503).json({
+        success: false,
+        error: "Blob Storage service is not configured. Set AZURE_STORAGE_CONNECTION_STRING in your environment."
+      });
+    }
     
     // Upload to blob storage
     const containerClient = blobServiceClient.getContainerClient("raw-documents");
