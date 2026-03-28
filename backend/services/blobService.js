@@ -25,7 +25,11 @@ async function downloadBlob(blobName) {
       return null;
     }
     const downloadBlockBlobResponse = await blockBlobClient.download(0);
-    const downloaded = await streamToString(downloadBlockBlobResponse.readableStreamBody);
+    const { readableStreamBody } = downloadBlockBlobResponse;
+    if (!readableStreamBody) {
+      return "";
+    }
+    const downloaded = await streamToString(readableStreamBody);
     return downloaded;
   } catch (error) {
     console.error(`Error downloading blob ${blobName}:`, error);

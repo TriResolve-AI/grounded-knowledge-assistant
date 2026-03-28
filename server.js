@@ -64,6 +64,38 @@ app.post("/govern", async (req, res) => {
 });
 
 // RAG pipeline route for full governance + search
+/**
+ * Build a schema-compliant audit record from a RAG result and the originating query.
+ * @param {object} result - Response from searchService.processUserQuery
+ * @param {string} query - The original user query
+ * @returns {object}
+ */
+function buildAuditRecord(result, query) {
+  return {
+    timestamp: new Date().toISOString(),
+    request_id: result.request_id,
+    full_query: query,
+    full_response: result.answer || '',
+    decision_status: result.decision_status || 'BLOCK',
+    trust_score: result.trust_score ?? 0,
+    risk_score: result.risk_score ?? 1,
+    allow_flag: result.flags?.allow_flag ?? false,
+    allowed_data_class: result.flags?.allowed_data_class || 'public',
+    detected_data_class: result.flags?.detected_data_class || 'public',
+    conform_access_flag: result.flags?.conform_access_flag ?? false,
+    violation_access_flag: result.flags?.violation_access_flag ?? true,
+    sensitive_data_flag: result.flags?.sensitive_data_flag ?? false,
+    prompt_abuse_flag: result.flags?.prompt_abuse_flag ?? false,
+    citation_insufficient_flag: result.flags?.citation_insufficient_flag ?? true,
+    blocked_rules_flag: result.flags?.blocked_rules_flag ?? false,
+    warned_rules_flag: result.flags?.warned_rules_flag ?? false,
+    blocked_rule_ids: result.blocked_rule_ids || [],
+    warned_rule_ids: result.warned_rule_ids || [],
+    citation_count: Array.isArray(result.citations) ? result.citations.length : 0,
+    citations: result.citations || []
+  };
+}
+
 app.post('/rag', async (req, res) => {
   try {
     const { query, user_role } = req.body;
@@ -73,32 +105,8 @@ app.post('/rag', async (req, res) => {
 
     const result = await searchService.processUserQuery(query, user_role);
 
-    const auditRecord = {
-      timestamp: new Date().toISOString(),
-      request_id: result.request_id,
-      full_query: query,
-      full_response: result.answer || '',
-      decision_status: result.decision_status || 'BLOCK',
-      trust_score: result.trust_score ?? 0,
-      risk_score: result.risk_score ?? 1,
-      allow_flag: result.flags?.allow_flag ?? false,
-      allowed_data_class: result.flags?.allowed_data_class || 'public',
-      detected_data_class: result.flags?.detected_data_class || 'public',
-      conform_access_flag: result.flags?.conform_access_flag ?? false,
-      violation_access_flag: result.flags?.violation_access_flag ?? true,
-      sensitive_data_flag: result.flags?.sensitive_data_flag ?? false,
-      prompt_abuse_flag: result.flags?.prompt_abuse_flag ?? false,
-      citation_insufficient_flag: result.flags?.citation_insufficient_flag ?? true,
-      blocked_rules_flag: result.flags?.blocked_rules_flag ?? false,
-      warned_rules_flag: result.flags?.warned_rules_flag ?? false,
-      blocked_rule_ids: result.blocked_rule_ids || [],
-      warned_rule_ids: result.warned_rule_ids || [],
-      citation_count: Array.isArray(result.citations) ? result.citations.length : 0,
-      citations: result.citations || []
-    };
-
     try {
-      await auditService.writeAuditRecord(auditRecord);
+      await auditService.writeAuditRecord(buildAuditRecord(result, query));
     } catch (auditError) {
       console.warn('Audit write failed:', auditError.message);
     }
@@ -158,29 +166,7 @@ app.get('/rag', async (req, res) => {
     const result = await searchService.processUserQuery(query, user_role);
 
     try {
-      await auditService.writeAuditRecord({
-        timestamp: new Date().toISOString(),
-        request_id: result.request_id,
-        full_query: query,
-        full_response: result.answer || '',
-        decision_status: result.decision_status || 'BLOCK',
-        trust_score: result.trust_score ?? 0,
-        risk_score: result.risk_score ?? 1,
-        allow_flag: result.flags?.allow_flag ?? false,
-        allowed_data_class: result.flags?.allowed_data_class || 'public',
-        detected_data_class: result.flags?.detected_data_class || 'public',
-        conform_access_flag: result.flags?.conform_access_flag ?? false,
-        violation_access_flag: result.flags?.violation_access_flag ?? true,
-        sensitive_data_flag: result.flags?.sensitive_data_flag ?? false,
-        prompt_abuse_flag: result.flags?.prompt_abuse_flag ?? false,
-        citation_insufficient_flag: result.flags?.citation_insufficient_flag ?? true,
-        blocked_rules_flag: result.flags?.blocked_rules_flag ?? false,
-        warned_rules_flag: result.flags?.warned_rules_flag ?? false,
-        blocked_rule_ids: result.blocked_rule_ids || [],
-        warned_rule_ids: result.warned_rule_ids || [],
-        citation_count: Array.isArray(result.citations) ? result.citations.length : 0,
-        citations: result.citations || []
-      });
+      await auditService.writeAuditRecord(buildAuditRecord(result, query));
     } catch (auditError) {
       console.warn('Audit write failed:', auditError.message);
     }
