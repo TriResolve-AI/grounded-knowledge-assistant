@@ -1,11 +1,11 @@
 const { BlobServiceClient } = require("@azure/storage-blob");
 
-const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+const connectionString = process.env.AZURE_BLOB_CONNECTION_STRING;
 const containerName = process.env.AZURE_BLOB_CONTAINER_NAME || "audit";
 
 function getBlobServiceClient() {
   if (!connectionString) {
-    throw new Error("AZURE_STORAGE_CONNECTION_STRING is required");
+    throw new Error("AZURE_BLOB_CONNECTION_STRING is required");
   }
   return BlobServiceClient.fromConnectionString(connectionString);
 }
