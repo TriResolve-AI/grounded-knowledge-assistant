@@ -68,10 +68,12 @@ async function writeLocalAuditLog(line) {
  * @returns {Promise<void>}
  */
 async function writeAuditRecord(auditRecord) {
+  const requestIdValue =
+    auditRecord.request_id || auditRecord.requestId || crypto.randomUUID();
   const record = {
-    request_id: auditRecord.request_id || auditRecord.requestId || crypto.randomUUID(),
-    timestamp: auditRecord.timestamp || new Date().toISOString(),
-    ...auditRecord
+    ...auditRecord,
+    request_id: requestIdValue,
+    timestamp: auditRecord.timestamp || new Date().toISOString()
   };
   // Ensure consistent snake_case field name (remove camelCase duplicate if spread re-introduced it)
   delete record.requestId;
