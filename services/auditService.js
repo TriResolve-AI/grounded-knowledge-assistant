@@ -59,9 +59,9 @@ async function readLocalAuditLog() {
   }
 }
 
-async function writeLocalAuditLog(content) {
+async function appendLocalAuditLine(line) {
   await ensureLocalDataDir();
-  await fs.writeFile(LOCAL_AUDIT_LOG_PATH, content, "utf8");
+  await fs.appendFile(LOCAL_AUDIT_LOG_PATH, line, "utf8");
 }
 
 function getContainerClient() {
@@ -107,22 +107,27 @@ async function downloadBlobText(blobName) {
   });
 }
 
+async function appendAuditLine(line) {
+  const containerClient = getContainerClient();
+  await containerClient.createIfNotExists();
+  const appendBlobClient = containerClient.getAppendBlobClient(AUDIT_LOG_BLOB);
+  await appendBlobClient.createIfNotExists({
+    blobHTTPHeaders: { blobContentType: "application/x-ndjson" }
+  });
+  const buffer = Buffer.from(line, "utf8");
+  await appendBlobClient.appendBlock(buffer, buffer.length);
+}
+
 async function uploadBlobText(blobName, content) {
-  if (isLocalFallbackEnabled()) {
-    if (blobName !== AUDIT_LOG_BLOB) {
-      return;
-    }
-
-    await writeLocalAuditLog(content);
-    return;
-  }
-
   const containerClient = getContainerClient();
   await containerClient.createIfNotExists();
   const blobClient = containerClient.getBlockBlobClient(blobName);
+  const blobContentType = blobName.endsWith(".jsonl") || blobName.endsWith(".ndjson")
+    ? "application/x-ndjson"
+    : "application/json";
   await blobClient.upload(content, Buffer.byteLength(content), {
     blobHTTPHeaders: {
-      blobContentType: "application/json"
+      blobContentType
     }
   });
 }
@@ -161,10 +166,15 @@ async function readAuditRecords() {
     return [];
   }
 
-  return raw
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line));
+  const records = [];
+  for (const line of raw.split("\n").filter((l) => l.trim().length > 0)) {
+    try {
+      records.push(JSON.parse(line));
+    } catch (err) {
+      console.warn("Failed to parse audit log line, skipping:", err.message);
+    }
+  }
+  return records;
 }
 
 async function writeAuditRecord(auditRecord) {
@@ -177,9 +187,13 @@ async function writeAuditRecord(auditRecord) {
   const schema = await getLockedAuditSchema();
   validateAgainstLockedSchema(record, schema);
 
-  const existing = await downloadBlobText(AUDIT_LOG_BLOB);
-  const nextContent = `${existing || ""}${JSON.stringify(record)}\n`;
-  await uploadBlobText(AUDIT_LOG_BLOB, nextContent);
+  const line = `${JSON.stringify(record)}\n`;
+
+  if (isLocalFallbackEnabled()) {
+    await appendLocalAuditLine(line);
+  } else {
+    await appendAuditLine(line);
+  }
 
   return record;
 }

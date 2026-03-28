@@ -268,8 +268,8 @@ function buildRagResponse({
 }
 
 async function processUserQuery(user_query, user_role, request_id = null) {
+    let requestId = request_id || crypto.randomUUID();
     try {
-        const requestId = request_id || crypto.randomUUID();
         const filterEngine = new governance.GovernanceFilter();
         const filterResult = await filterEngine.evaluate(user_query, user_role);
 
@@ -335,7 +335,15 @@ async function processUserQuery(user_query, user_role, request_id = null) {
         const trust_score = Number((risk_dict.trust_score || 0).toFixed(4));
         const risk_score = Number((1 - trust_score).toFixed(4));
         const allowed_data_class = (allowed_data_classes && allowed_data_classes[0]) || 'public';
-        const detected_data_class = raw_citations.length > 0 ? 'public' : allowed_data_class;
+        const detected_data_class = (() => {
+            if (!raw_citations || raw_citations.length === 0) {
+                return allowed_data_class;
+            }
+            const classes = raw_citations
+                .map(c => c && (c.data_class || (c.metadata && c.metadata.data_class)))
+                .filter(Boolean);
+            return classes[0] || allowed_data_class;
+        })();
 
         const flags = buildFlags({
             decision_status,
@@ -378,7 +386,7 @@ async function processUserQuery(user_query, user_role, request_id = null) {
         console.error('[RAG] processUserQuery error', error.message);
         return {
             status: 'error',
-            request_id: request_id || crypto.randomUUID(),
+            request_id: requestId,
             answer: '',
             disclaimer: '',
             message: 'Internal processing error',

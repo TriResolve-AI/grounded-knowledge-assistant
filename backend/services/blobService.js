@@ -13,13 +13,17 @@ function getBlobServiceClient() {
 /**
  * Download a file from Azure Blob Storage
  * @param {string} blobName - Name of the blob to download
- * @returns {Promise<string>} - Content of the blob
+ * @returns {Promise<string|null>} - Content of the blob, or null if not found
  */
 async function downloadBlob(blobName) {
   try {
     const blobServiceClient = getBlobServiceClient();
     const containerClient = blobServiceClient.getContainerClient(containerName);
     const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+    const exists = await blockBlobClient.exists();
+    if (!exists) {
+      return null;
+    }
     const downloadBlockBlobResponse = await blockBlobClient.download(0);
     const downloaded = await streamToString(downloadBlockBlobResponse.readableStreamBody);
     return downloaded;
@@ -57,11 +61,37 @@ async function uploadBlob(blobName, content) {
   try {
     const blobServiceClient = getBlobServiceClient();
     const containerClient = blobServiceClient.getContainerClient(containerName);
+    await containerClient.createIfNotExists();
     const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-    await blockBlobClient.upload(content, content.length);
+    const contentLength = Buffer.byteLength(content, "utf8");
+    await blockBlobClient.upload(content, contentLength);
     console.log(`Blob ${blobName} uploaded successfully`);
   } catch (error) {
     console.error(`Error uploading blob ${blobName}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Atomically append a line to an Append Blob in Azure Blob Storage.
+ * Creates the blob if it does not already exist.
+ * @param {string} blobName - Name of the append blob
+ * @param {string} line - Line to append (should end with "\n")
+ * @returns {Promise<void>}
+ */
+async function appendBlobLine(blobName, line) {
+  try {
+    const blobServiceClient = getBlobServiceClient();
+    const containerClient = blobServiceClient.getContainerClient(containerName);
+    await containerClient.createIfNotExists();
+    const appendBlobClient = containerClient.getAppendBlobClient(blobName);
+    await appendBlobClient.createIfNotExists({
+      blobHTTPHeaders: { blobContentType: "application/x-ndjson" }
+    });
+    const buffer = Buffer.from(line, "utf8");
+    await appendBlobClient.appendBlock(buffer, buffer.length);
+  } catch (error) {
+    console.error(`Error appending to blob ${blobName}:`, error);
     throw error;
   }
 }
@@ -83,5 +113,6 @@ async function getAuditSchema() {
 module.exports = {
   downloadBlob,
   uploadBlob,
+  appendBlobLine,
   getAuditSchema
 };

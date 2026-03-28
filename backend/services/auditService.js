@@ -57,9 +57,9 @@ async function readLocalAuditLog() {
   }
 }
 
-async function writeLocalAuditLog(content) {
+async function writeLocalAuditLog(line) {
   await ensureLocalDataDir();
-  await fs.writeFile(LOCAL_AUDIT_LOG_PATH, content, "utf8");
+  await fs.appendFile(LOCAL_AUDIT_LOG_PATH, line, "utf8");
 }
 
 /**
@@ -69,23 +69,22 @@ async function writeLocalAuditLog(content) {
  */
 async function writeAuditRecord(auditRecord) {
   const record = {
-    request_id: auditRecord.request_id || crypto.randomUUID(),
+    request_id: auditRecord.request_id || auditRecord.requestId || crypto.randomUUID(),
     timestamp: auditRecord.timestamp || new Date().toISOString(),
     ...auditRecord
   };
+  // Ensure consistent snake_case field name (remove camelCase duplicate if spread re-introduced it)
+  delete record.requestId;
 
   const schema = await getLockedAuditSchema();
   validateAgainstLockedSchema(record, schema);
 
-  const existing = isLocalFallbackEnabled()
-    ? await readLocalAuditLog()
-    : await blobService.downloadBlob(AUDIT_LOG_BLOB);
-  const nextContent = `${existing || ""}${JSON.stringify(record)}\n`;
+  const line = `${JSON.stringify(record)}\n`;
 
   if (isLocalFallbackEnabled()) {
-    await writeLocalAuditLog(nextContent);
+    await writeLocalAuditLog(line);
   } else {
-    await blobService.uploadBlob(AUDIT_LOG_BLOB, nextContent);
+    await blobService.appendBlobLine(AUDIT_LOG_BLOB, line);
   }
 
   return record;
@@ -103,10 +102,15 @@ async function readAuditRecords() {
     return [];
   }
 
-  return content
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line));
+  const records = [];
+  for (const line of content.split("\n").filter((l) => l.trim().length > 0)) {
+    try {
+      records.push(JSON.parse(line));
+    } catch (err) {
+      console.warn("Failed to parse audit log line, skipping:", err.message);
+    }
+  }
+  return records;
 }
 
 /**

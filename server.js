@@ -114,8 +114,25 @@ app.post('/rag', async (req, res) => {
     // Write error audit record
     try {
       await auditService.writeAuditRecord({
-        action: 'rag_query',
-        status: 'error',
+        full_query: (req.body && req.body.query) ? req.body.query : '',
+        full_response: '',
+        decision_status: 'error',
+        trust_score: 0,
+        risk_score: 1,
+        allow_flag: false,
+        allowed_data_class: 'public',
+        detected_data_class: 'public',
+        conform_access_flag: false,
+        violation_access_flag: true,
+        sensitive_data_flag: false,
+        prompt_abuse_flag: false,
+        citation_insufficient_flag: true,
+        blocked_rules_flag: true,
+        warned_rules_flag: false,
+        blocked_rule_ids: [],
+        warned_rule_ids: [],
+        citation_count: 0,
+        citations: [],
         errorMessage: error.message
       });
     } catch (auditError) {
@@ -180,8 +197,13 @@ app.get('/rag', async (req, res) => {
   }
 });
 
-// Audit log routes
+// Audit log routes — only available when AUDIT_LOG_ENABLED=true
+const auditLogEnabled = process.env.AUDIT_LOG_ENABLED === 'true';
+
 app.get('/audit-log', async (req, res) => {
+  if (!auditLogEnabled) {
+    return res.status(403).json({ error: 'Audit log endpoint is disabled. Set AUDIT_LOG_ENABLED=true to enable.' });
+  }
   try {
     const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
@@ -199,6 +221,9 @@ app.get('/audit-log', async (req, res) => {
 });
 
 app.get('/audit-log/schema', (req, res) => {
+  if (!auditLogEnabled) {
+    return res.status(403).json({ error: 'Audit log endpoint is disabled. Set AUDIT_LOG_ENABLED=true to enable.' });
+  }
   auditService
     .getLockedAuditSchema()
     .then((schema) => {

@@ -15,10 +15,28 @@ router.post("/rag", async (req, res) => {
   }
 
   try {
-    // Create audit record for this RAG request
+    // Create a schema-compliant audit record with safe defaults for fields that
+    // cannot yet be determined (RAG pipeline not integrated in this route).
     const auditRecord = {
-      action: "rag_query",
-      query,
+      full_query: query,
+      full_response: '',
+      decision_status: 'pending',
+      trust_score: 0,
+      risk_score: 1,
+      allow_flag: false,
+      allowed_data_class: 'public',
+      detected_data_class: 'public',
+      conform_access_flag: false,
+      violation_access_flag: false,
+      sensitive_data_flag: false,
+      prompt_abuse_flag: false,
+      citation_insufficient_flag: true,
+      blocked_rules_flag: false,
+      warned_rules_flag: false,
+      blocked_rule_ids: [],
+      warned_rule_ids: [],
+      citation_count: 0,
+      citations: [],
       userId: userId || "anonymous",
       sessionId: sessionId || null,
       method: req.method,
@@ -27,8 +45,8 @@ router.post("/rag", async (req, res) => {
       status: "success"
     };
 
-    // Write audit record
-    await auditService.writeAuditRecord(auditRecord);
+    // Write audit record and capture the returned record (which has request_id)
+    const writtenRecord = await auditService.writeAuditRecord(auditRecord);
 
     // TODO: Integrate with actual RAG pipeline and governance checks
     // For now, return a placeholder response
@@ -36,7 +54,7 @@ router.post("/rag", async (req, res) => {
       message: "RAG query processed",
       query,
       timestamp: new Date().toISOString(),
-      auditId: auditRecord.requestId
+      auditId: writtenRecord.request_id
     });
   } catch (error) {
     console.error("Error processing RAG query:", error);
@@ -44,12 +62,29 @@ router.post("/rag", async (req, res) => {
     // Write failure audit record
     try {
       await auditService.writeAuditRecord({
-        action: "rag_query",
-        query,
+        full_query: query,
+        full_response: '',
+        decision_status: 'error',
+        trust_score: 0,
+        risk_score: 1,
+        allow_flag: false,
+        allowed_data_class: 'public',
+        detected_data_class: 'public',
+        conform_access_flag: false,
+        violation_access_flag: true,
+        sensitive_data_flag: false,
+        prompt_abuse_flag: false,
+        citation_insufficient_flag: true,
+        blocked_rules_flag: true,
+        warned_rules_flag: false,
+        blocked_rule_ids: [],
+        warned_rule_ids: [],
+        citation_count: 0,
+        citations: [],
         userId: userId || "anonymous",
         sessionId: sessionId || null,
         status: "error",
-        error: error.message
+        errorMessage: error.message
       });
     } catch (auditError) {
       console.error("Error writing failure audit record:", auditError);

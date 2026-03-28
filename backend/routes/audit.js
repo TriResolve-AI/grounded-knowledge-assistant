@@ -2,11 +2,22 @@ const express = require("express");
 const router = express.Router();
 const auditService = require("../services/auditService");
 
+const auditLogEnabled = process.env.AUDIT_LOG_ENABLED === "true";
+
+function requireAuditEnabled(req, res, next) {
+  if (!auditLogEnabled) {
+    return res.status(403).json({
+      error: "Audit log endpoint is disabled. Set AUDIT_LOG_ENABLED=true to enable."
+    });
+  }
+  next();
+}
+
 /**
  * GET /audit-log - Retrieve live audit records
  * Query params: limit (default 100), offset (default 0)
  */
-router.get("/audit-log", async (req, res) => {
+router.get("/audit-log", requireAuditEnabled, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
@@ -26,7 +37,7 @@ router.get("/audit-log", async (req, res) => {
 /**
  * GET /audit-log/schema - Retrieve the audit log schema from Azure Blob
  */
-router.get("/audit-log/schema", async (req, res) => {
+router.get("/audit-log/schema", requireAuditEnabled, async (req, res) => {
   try {
     const schema = await auditService.getLockedAuditSchema();
     res.json({
