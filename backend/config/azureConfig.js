@@ -8,7 +8,7 @@ const { DocumentAnalysisClient } = require("@azure/ai-form-recognizer");
 
 // ─── Blob ─────────────────────────────────────────────────────────────────────
 const blobServiceClient = BlobServiceClient.fromConnectionString(
-  process.env.AZURE_STORAGE_CONNECTION_STRING
+  process.env.AZURE_BLOB_CONNECTION_STRING
 );
 const containerClient = blobServiceClient.getContainerClient(
   process.env.AZURE_BLOB_CONTAINER_NAME || "raw-documents"
@@ -28,7 +28,7 @@ const searchClient = new SearchClient(
 // ─── OpenAI ───────────────────────────────────────────────────────────────────
 const openaiClient = new OpenAIClient(
   process.env.AZURE_OPENAI_ENDPOINT,
-  new OAICredential(process.env.AZURE_OPENAI_API_KEY)
+  new OAICredential(process.env.AZURE_OPENAI_KEY)
 );
 
 // ─── Document Intelligence ────────────────────────────────────────────────────

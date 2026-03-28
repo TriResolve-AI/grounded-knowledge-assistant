@@ -38,7 +38,7 @@ const LOCAL_AUDIT_SCHEMA = {
 let cachedSchema = null;
 
 function isLocalFallbackEnabled() {
-  return !process.env.AZURE_STORAGE_CONNECTION_STRING;
+  return !process.env.AZURE_BLOB_CONNECTION_STRING;
 }
 
 async function ensureLocalDataDir() {

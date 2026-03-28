@@ -3,7 +3,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const { BlobServiceClient } = require("@azure/storage-blob");
 
-const CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
+const CONNECTION_STRING = process.env.AZURE_BLOB_CONNECTION_STRING;
 const CONTAINER_NAME = process.env.AZURE_BLOB_CONTAINER_NAME || "audit";
 const AUDIT_LOG_BLOB = process.env.AUDIT_LOG_BLOB || "audit_log_live.jsonl";
 const AUDIT_SCHEMA_BLOB = "audit_log_schema.json";
@@ -66,7 +66,7 @@ async function appendLocalAuditLine(line) {
 
 function getContainerClient() {
   if (!CONNECTION_STRING) {
-    throw new Error("AZURE_STORAGE_CONNECTION_STRING is required");
+    throw new Error("AZURE_BLOB_CONNECTION_STRING is required");
   }
 
   const blobServiceClient = BlobServiceClient.fromConnectionString(CONNECTION_STRING);

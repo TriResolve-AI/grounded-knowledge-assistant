@@ -5,7 +5,7 @@ class OpenAIService {
   constructor() {
     this.client = openaiClient;
     this.embeddingDeployment = process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT || "text-embedding-ada-002";
-    this.completionDeployment = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4";
+    this.completionDeployment = process.env.AZURE_OPENAI_DEPLOYMENT || "gpt-4o";
   }
 
   /**
