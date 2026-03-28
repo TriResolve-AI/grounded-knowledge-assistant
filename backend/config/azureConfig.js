@@ -21,7 +21,7 @@ const searchIndexClient = new SearchIndexClient(
 );
 const searchClient = new SearchClient(
   process.env.AZURE_SEARCH_ENDPOINT,
-  process.env.AZURE_SEARCH_INDEX || "documents",
+  process.env.AZURE_SEARCH_INDEX || "cg-knowledge-index",
   new AzureKeyCredential(process.env.AZURE_SEARCH_KEY)
 );
 
