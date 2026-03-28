@@ -4,6 +4,7 @@ const cors = require("cors");
 
 const queryRoutes = require("./routes/query");
 const auditRoutes = require("./routes/audit");
+const documentRoutes = require("./routes/documents");
 
 const app = express();
 
@@ -51,10 +52,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// Mount routes
-app.use(queryRoutes);
-app.use(auditRoutes);
-
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -68,8 +65,8 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 // Start server
-app.listen(port, () => {
-  console.log(`\n🚀 Grounded Knowledge Assistant API running on port ${port}`);
+app.listen(PORT, () => {
+  console.log(`\n🚀 Grounded Knowledge Assistant API running on port ${PORT}`);
   console.log(`\n📋 Available endpoints:`);
   console.log(`   POST   /query          - Ask a question`);
   console.log(`   GET    /audit          - View audit logs`);

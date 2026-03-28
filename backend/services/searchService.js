@@ -13,6 +13,9 @@ class SearchService {
    * @returns {Promise<Array>} Search results with metadata
    */
   async search(query, options = {}) {
+    if (!this.searchClient) {
+      throw new Error("Azure Search service is not configured. Set AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_KEY.");
+    }
     const {
       top = 5,
       skip = 0,
@@ -78,6 +81,9 @@ class SearchService {
    * Upload documents to search index with full metadata
    */
   async uploadDocuments(documents) {
+    if (!this.searchClient) {
+      throw new Error("Azure Search service is not configured. Set AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_KEY.");
+    }
     try {
       const result = await this.searchClient.uploadDocuments(documents);
       return result;
@@ -91,6 +97,9 @@ class SearchService {
    * Delete documents by filter
    */
   async deleteDocuments(filter) {
+    if (!this.searchClient) {
+      throw new Error("Azure Search service is not configured. Set AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_KEY.");
+    }
     try {
       // First search for documents to delete
       const searchResults = await this.searchClient.search("*", {
