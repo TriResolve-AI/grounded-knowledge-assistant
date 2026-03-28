@@ -141,7 +141,16 @@ app.post('/rag', async (req, res) => {
         warned_rule_ids: [],
         citation_count: 0,
         citations: [],
-        errorMessage: error.message
+        errorMessage: error.message,
+        // Schema-required fields with safe defaults for error path
+        full_query: (req.body && req.body.query) ? req.body.query : '',
+        full_response: null,
+        decision_status: 'error',
+        citations: [],
+        flags: {
+          safety_violation: false,
+          policy_block: false
+        }
       });
     } catch (auditError) {
       console.error('Error writing error audit record:', auditError);
